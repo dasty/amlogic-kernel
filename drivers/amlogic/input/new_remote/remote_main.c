@@ -676,7 +676,7 @@ static int remote_probe(struct platform_device *pdev)
 	for (i = 0; i < ARRAY_SIZE(key_map[remote->map_num]); i++) {
 		key_map[remote->map_num][i] = KEY_RESERVED;
 	}
-	for (i = 0; i < ARRAY_SIZE(mouse_map); i++) {
+	for (i = 0; i < ARRAY_SIZE(mouse_map[remote->map_num]); i++) {
 		mouse_map[remote->map_num][i] = 0xffff;
 	}
 	remote->repeat_delay = 250;
