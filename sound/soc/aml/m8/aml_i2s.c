@@ -74,6 +74,8 @@ EXPORT_SYMBOL(aml_i2s_capture_phy_start_addr);
 EXPORT_SYMBOL(aml_i2s_alsa_write_addr);
 
 
+static char cache_buffer_bytes[256];
+int cached_len = 0;
 /*--------------------------------------------------------------------------*\
  * Hardware definition
 \*--------------------------------------------------------------------------*/
@@ -563,6 +565,7 @@ static int aml_i2s_open(struct snd_pcm_substream *substream)
 	audio_gate_status  |= s->device_type;
 	mutex_unlock(&gate_mutex);
  out:
+    cached_len = 0;
 	return ret;
 }
 
@@ -616,6 +619,47 @@ static int aml_i2s_copy_playback(struct snd_pcm_runtime *runtime, int channel,
         return res;
     res = copy_from_user(ubuf, buf, n);
     if (res) return -EFAULT;
+    //mask 64 byte
+	if (s->device_type == AML_AUDIO_I2SOUT && (cached_len != 0 || (n % 64) != 0)) {
+		int byte_size = n;
+		int total_len;
+		int ouput_len;
+		int next_cached_len;
+		int cache_buffer_bytes_tmp[256];
+
+		if (aml_i2s_alsa_write_addr >= cached_len)
+			hwbuf -= cached_len;
+		else {
+			pr_info("----cached_len= %d, offset = %d\n", cached_len, (int)hwbuf);
+			hwbuf += (frames_to_bytes(runtime, runtime->buffer_size) - cached_len);
+		}
+		
+		total_len = byte_size + cached_len;
+		ouput_len = total_len &(~0x3f);
+		next_cached_len = total_len - ouput_len;
+
+		if (next_cached_len) {
+			memcpy((void *)cache_buffer_bytes_tmp,
+		            (void *)((char *)ubuf + byte_size - next_cached_len),
+		            next_cached_len);
+		}
+
+		memmove((void *)((char *)ubuf + cached_len), (void *)ubuf, ouput_len - cached_len);
+		
+		if (cached_len) {
+			memcpy((void *)ubuf, (void *)cache_buffer_bytes, cached_len);
+		}
+
+		if (next_cached_len)
+			memcpy((void *)cache_buffer_bytes,
+				(void *)cache_buffer_bytes_tmp,
+				next_cached_len);
+
+		cached_len = next_cached_len;
+		n = ouput_len;
+	}
+    //end of mask
+	
     if(access_ok(VERIFY_READ, buf, frames_to_bytes(runtime, count)))
     {
       if(runtime->format == SNDRV_PCM_FORMAT_S16_LE ){
@@ -625,9 +669,9 @@ static int aml_i2s_copy_playback(struct snd_pcm_runtime *runtime, int channel,
 
         left = to;
 		right = to + 16;
-		if (pos % align) {
+		/*if (pos % align) {
 		    printk("audio data unligned: pos=%d, n=%d, align=%d\n", (int)pos, n, align);
-		}
+		}*/
 		for (j = 0; j < n; j += 64) {
 		    for (i = 0; i < 16; i++) {
 	          *left++ = (*tfrom++) ;
@@ -644,9 +688,9 @@ static int aml_i2s_copy_playback(struct snd_pcm_runtime *runtime, int channel,
         left = to;
         right = to + 8;
 
-        if(pos % align){
+        /*if(pos % align){
           printk("audio data unaligned: pos=%d, n=%d, align=%d\n", (int)pos, n, align);
-        }
+        }*/
         for(j=0; j< n; j+= 64){
           for(i=0; i<8; i++){
             *left++  =  (*tfrom ++);
@@ -664,9 +708,9 @@ static int aml_i2s_copy_playback(struct snd_pcm_runtime *runtime, int channel,
         left = to;
         right = to + 8;
 
-        if(pos % align){
+        /*if(pos % align){
           printk("audio data unaligned: pos=%d, n=%d, align=%d\n", (int)pos, n, align);
-        }
+        }*/
 
 		if(runtime->channels == 8){
 			int32_t *lf, *cf, *rf, *ls, *rs, *lef, *sbl, *sbr;
